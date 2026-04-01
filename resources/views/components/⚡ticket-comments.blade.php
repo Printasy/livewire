@@ -14,7 +14,7 @@ new class extends Component
     {
         $validated = $this->validate(
             [
-                'content' => 'required|min:3',
+                'content' => 'required|string|min:3',
                 'type' => 'required|in:comment,note',
             ],
             [
@@ -30,14 +30,24 @@ new class extends Component
             'type' => $validated['type'],
         ]);
 
+        $label = $validated['type'] === 'note'
+            ? 'Interne notitie toegevoegd'
+            : 'Comment toegevoegd';
+
+        $description = $validated['type'] === 'note'
+            ? 'Een interne notitie werd toegevoegd aan dit ticket.'
+            : 'Een nieuwe comment werd toegevoegd aan dit ticket.';
+
+        $this->ticket->logActivity(
+            'comment_created',
+            $label,
+            $description
+        );
+
         $this->reset('content');
         $this->type = 'comment';
 
-        $this->dispatch(
-            'comment-created',
-            commentId: $comment->id,
-            ticketId: $this->ticket->id
-        );
+        $this->dispatch('comment-created', commentId: $comment->id, ticketId: $this->ticket->id);
 
         session()->flash('comments_success', 'De reactie werd succesvol toegevoegd.');
     }
@@ -50,13 +60,23 @@ new class extends Component
             return;
         }
 
+        $label = $comment->type === 'note'
+            ? 'Interne notitie verwijderd'
+            : 'Comment verwijderd';
+
+        $description = $comment->type === 'note'
+            ? 'Een interne notitie werd verwijderd van dit ticket.'
+            : 'Een comment werd verwijderd van dit ticket.';
+
         $comment->delete();
 
-        $this->dispatch(
-            'comment-deleted',
-            commentId: $commentId,
-            ticketId: $this->ticket->id
+        $this->ticket->logActivity(
+            'comment_deleted',
+            $label,
+            $description
         );
+
+        $this->dispatch('comment-deleted', commentId: $commentId, ticketId: $this->ticket->id);
 
         session()->flash('comments_success', 'De reactie werd succesvol verwijderd.');
     }
@@ -64,9 +84,7 @@ new class extends Component
     #[Computed]
     public function comments()
     {
-        return $this->ticket->comments()
-            ->latest()
-            ->get();
+        return $this->ticket->comments()->latest()->get();
     }
 };
 ?>
@@ -88,7 +106,6 @@ new class extends Component
                 <label for="type" class="mb-2 block text-sm font-medium text-gray-700">
                     Type
                 </label>
-
                 <select
                     id="type"
                     wire:model="type"
@@ -97,7 +114,6 @@ new class extends Component
                     <option value="comment">Comment</option>
                     <option value="note">Interne notitie</option>
                 </select>
-
                 @error('type')
                 <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
                 @enderror
@@ -107,7 +123,6 @@ new class extends Component
                 <label for="content" class="mb-2 block text-sm font-medium text-gray-700">
                     Inhoud
                 </label>
-
                 <textarea
                     id="content"
                     rows="4"
@@ -115,7 +130,6 @@ new class extends Component
                     class="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Schrijf hier je reactie of interne notitie..."
                 ></textarea>
-
                 @error('content')
                 <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
                 @enderror
@@ -143,7 +157,6 @@ new class extends Component
             <h2 class="text-lg font-semibold text-gray-900">
                 Historiek van reacties
             </h2>
-
             <span class="text-sm text-gray-500">
                 {{ $this->comments->count() }} item(s)
             </span>

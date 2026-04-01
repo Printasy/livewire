@@ -1,6 +1,8 @@
 <?php
 
 use App\Models\Ticket;
+use App\Models\User;
+use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
@@ -12,44 +14,108 @@ new #[Layout('layouts.app')] class extends Component
     public string $description = '';
     public string $status = 'open';
     public string $priority = 'medium';
+    public string $workflow_step = 'new';
+    public string $assigned_user_id = '';
 
     public function mount(Ticket $ticket): void
     {
         $this->ticket = $ticket;
-        $this->fillFormFromTicket();
+        $this->subject = $ticket->subject;
+        $this->description = $ticket->description;
+        $this->status = $ticket->status;
+        $this->priority = $ticket->priority;
+        $this->workflow_step = $ticket->workflow_step ?? 'new';
+        $this->assigned_user_id = $ticket->assigned_user_id ? (string) $ticket->assigned_user_id : '';
     }
 
-    protected function rules(): array
+    #[Computed]
+    public function assignees()
     {
-        return [
-            'subject' => 'required|string|min:3|max:255',
-            'description' => 'required|string|min:10',
-            'status' => 'required|in:open,in_progress,closed',
-            'priority' => 'required|in:low,medium,high',
-        ];
-    }
-
-    protected function messages(): array
-    {
-        return [
-            'subject.required' => 'Het onderwerp is verplicht.',
-            'subject.min' => 'Het onderwerp moet minstens 3 tekens bevatten.',
-            'subject.max' => 'Het onderwerp mag maximaal 255 tekens bevatten.',
-            'description.required' => 'De beschrijving is verplicht.',
-            'description.min' => 'De beschrijving moet minstens 10 tekens bevatten.',
-            'status.required' => 'Kies een status.',
-            'status.in' => 'De gekozen status is ongeldig.',
-            'priority.required' => 'Kies een prioriteit.',
-            'priority.in' => 'De gekozen prioriteit is ongeldig.',
-        ];
+        return User::query()
+            ->orderBy('name')
+            ->get();
     }
 
     public function save(): void
     {
-        $validated = $this->validate();
+        $validated = $this->validate(
+            [
+                'subject' => 'required|string|min:3|max:255',
+                'description' => 'required|string|min:10',
+                'status' => 'required|in:open,in_progress,closed',
+                'priority' => 'required|in:low,medium,high',
+                'workflow_step' => 'required|in:new,triage,investigating,waiting_customer,resolved',
+                'assigned_user_id' => 'nullable|exists:users,id',
+            ],
+            [
+                'subject.required' => 'Het onderwerp is verplicht.',
+                'subject.min' => 'Het onderwerp moet minstens 3 tekens bevatten.',
+                'subject.max' => 'Het onderwerp mag maximaal 255 tekens bevatten.',
+                'description.required' => 'De beschrijving is verplicht.',
+                'description.min' => 'De beschrijving moet minstens 10 tekens bevatten.',
+                'status.required' => 'Kies een status.',
+                'status.in' => 'De gekozen status is ongeldig.',
+                'priority.required' => 'Kies een prioriteit.',
+                'priority.in' => 'De gekozen prioriteit is ongeldig.',
+                'workflow_step.required' => 'Kies een workflowstap.',
+                'workflow_step.in' => 'De gekozen workflowstap is ongeldig.',
+                'assigned_user_id.exists' => 'De gekozen behandelaar bestaat niet.',
+            ]
+        );
 
-        $this->ticket->update($validated);
+        $oldSubject = $this->ticket->subject;
+        $oldDescription = $this->ticket->description;
+        $oldStatus = $this->ticket->status;
+        $oldPriority = $this->ticket->priority;
+        $oldWorkflow = $this->ticket->workflow_step;
+        $oldAssigneeName = $this->ticket->assigneeName();
+
+        $this->ticket->update([
+            'subject' => $validated['subject'],
+            'description' => $validated['description'],
+            'status' => $validated['status'],
+            'priority' => $validated['priority'],
+            'workflow_step' => $validated['workflow_step'],
+            'assigned_user_id' => $validated['assigned_user_id'] !== '' ? (int) $validated['assigned_user_id'] : null,
+        ]);
+
         $this->ticket->refresh();
+
+        $changes = [];
+
+        if ($oldSubject !== $this->ticket->subject) {
+            $changes[] = "Onderwerp gewijzigd van '{$oldSubject}' naar '{$this->ticket->subject}'.";
+        }
+
+        if ($oldDescription !== $this->ticket->description) {
+            $changes[] = 'Beschrijving werd aangepast.';
+        }
+
+        if ($oldStatus !== $this->ticket->status) {
+            $changes[] = "Status gewijzigd van '{$oldStatus}' naar '{$this->ticket->status}'.";
+        }
+
+        if ($oldPriority !== $this->ticket->priority) {
+            $changes[] = "Prioriteit gewijzigd van '{$oldPriority}' naar '{$this->ticket->priority}'.";
+        }
+
+        if ($oldWorkflow !== $this->ticket->workflow_step) {
+            $changes[] = "Workflow gewijzigd van '{$oldWorkflow}' naar '{$this->ticket->workflow_step}'.";
+        }
+
+        if ($oldAssigneeName !== $this->ticket->assigneeName()) {
+            $changes[] = "Toegewezen behandelaar gewijzigd van '{$oldAssigneeName}' naar '{$this->ticket->assigneeName()}'.";
+        }
+
+        if (! empty($changes)) {
+            $this->ticket->logActivity(
+                'ticket_updated',
+                'Ticket bijgewerkt',
+                implode(' ', $changes)
+            );
+        }
+
+        $this->dispatch('ticket-activity-created');
 
         session()->flash('success', 'Het ticket werd succesvol bijgewerkt.');
     }
@@ -61,14 +127,6 @@ new #[Layout('layouts.app')] class extends Component
         session()->flash('success', 'Het ticket werd succesvol verwijderd.');
 
         return $this->redirect(route('tickets.index'));
-    }
-
-    protected function fillFormFromTicket(): void
-    {
-        $this->subject = $this->ticket->subject;
-        $this->description = $this->ticket->description;
-        $this->status = $this->ticket->status;
-        $this->priority = $this->ticket->priority;
     }
 };
 ?>
@@ -184,6 +242,62 @@ new #[Layout('layouts.app')] class extends Component
                     </div>
                 </div>
 
+                <div class="grid gap-6 md:grid-cols-2">
+                    <div>
+                        <label for="workflow_step" class="mb-2 block text-sm font-medium text-gray-700">
+                            Workflow
+                        </label>
+                        <select
+                            id="workflow_step"
+                            wire:model="workflow_step"
+                            class="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="new">Nieuw</option>
+                            <option value="triage">Triage</option>
+                            <option value="investigating">Onderzoek</option>
+                            <option value="waiting_customer">Wacht op klant</option>
+                            <option value="resolved">Opgelost</option>
+                        </select>
+                        @error('workflow_step')
+                        <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+
+                    <div>
+                        <label for="assigned_user_id" class="mb-2 block text-sm font-medium text-gray-700">
+                            Toegewezen aan
+                        </label>
+                        <select
+                            id="assigned_user_id"
+                            wire:model="assigned_user_id"
+                            class="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Niet toegewezen</option>
+                            @foreach ($this->assignees as $assignee)
+                                <option value="{{ $assignee->id }}">
+                                    {{ $assignee->name }}
+                                </option>
+                            @endforeach
+                        </select>
+                        @error('assigned_user_id')
+                        <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                </div>
+
+                <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+                    <div class="grid gap-3 md:grid-cols-2">
+                        <div>
+                            <span class="font-semibold">Huidige workflow:</span>
+                            {{ $ticket->workflowLabel() }}
+                        </div>
+                        <div>
+                            <span class="font-semibold">Huidige behandelaar:</span>
+                            {{ $ticket->assigneeName() }}
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex items-center gap-4">
                     <button
                         type="submit"
@@ -226,5 +340,6 @@ new #[Layout('layouts.app')] class extends Component
         <livewire:ticket-overview-stats :ticket="$ticket" :key="'ticket-overview-stats-' . $ticket->id" />
         <livewire:ticket-comments :ticket="$ticket" :key="'ticket-comments-' . $ticket->id" />
         <livewire:ticket-attachments :ticket="$ticket" :key="'ticket-attachments-' . $ticket->id" />
+        <livewire:ticket-activity-log :ticket="$ticket" :key="'ticket-activity-log-' . $ticket->id" />
     </div>
 </div>
