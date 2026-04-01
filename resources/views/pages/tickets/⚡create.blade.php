@@ -4,17 +4,16 @@ use App\Models\Ticket;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
-new
-#[Layout('layouts.app')]
-class extends Component {
+new #[Layout('layouts.app')] class extends Component
+{
     public string $subject = '';
     public string $description = '';
     public string $priority = 'medium';
     public string $status = 'open';
 
     protected array $rules = [
-        'subject' => 'required|min:3|max:255',
-        'description' => 'required|min:10',
+        'subject' => 'required|string|min:3|max:255',
+        'description' => 'required|string|min:10',
         'priority' => 'required|in:low,medium,high',
         'status' => 'required|in:open,in_progress,closed',
     ];
@@ -34,8 +33,21 @@ class extends Component {
     public function save(): void
     {
         $validated = $this->validate();
-        Ticket::create($validated);
+
+        $ticket = Ticket::create([
+            ...$validated,
+            'assigned_user_id' => null,
+            'workflow_step' => 'new',
+        ]);
+
+        $ticket->logActivity(
+            'ticket_created',
+            'Ticket aangemaakt',
+            'Het ticket werd succesvol aangemaakt en staat op workflowstap Nieuw.'
+        );
+
         session()->flash('success', 'Het ticket werd succesvol aangemaakt.');
+
         $this->reset('subject', 'description');
         $this->priority = 'medium';
         $this->status = 'open';
@@ -50,7 +62,7 @@ class extends Component {
                 Nieuw support ticket
             </h1>
             <p class="mt-2 text-sm text-gray-600">
-                Maak een nieuw ticket aan via een Livewire 4 page component.
+                Maak een nieuw ticket aan via een Livewire page component.
             </p>
         </div>
 
@@ -132,6 +144,10 @@ class extends Component {
                     </div>
                 </div>
 
+                <div class="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                    Nieuwe tickets starten automatisch als <strong>Niet toegewezen</strong> en workflow <strong>Nieuw</strong>.
+                </div>
+
                 <div class="flex items-center gap-4">
                     <button
                         type="submit"
@@ -140,7 +156,10 @@ class extends Component {
                     >
                         Ticket opslaan
                     </button>
-                    <span wire:loading class="text-sm text-gray-500">Bezig met opslaan...</span>
+
+                    <span wire:loading class="text-sm text-gray-500">
+                        Bezig met opslaan...
+                    </span>
                 </div>
             </form>
         </div>

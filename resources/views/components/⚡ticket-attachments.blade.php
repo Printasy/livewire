@@ -1,7 +1,6 @@
 <?php
 
 use App\Models\Ticket;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Attributes\Computed;
 use Livewire\Component;
@@ -14,26 +13,19 @@ new class extends Component
     public Ticket $ticket;
     public $file = null;
 
-    protected function rules(): array
-    {
-        return [
-            'file' => 'required|file|max:5120|mimes:jpg,jpeg,png,pdf,txt,log,doc,docx',
-        ];
-    }
-
-    protected function messages(): array
-    {
-        return [
-            'file.required' => 'Kies een bestand om te uploaden.',
-            'file.file' => 'De gekozen upload is ongeldig.',
-            'file.max' => 'Het bestand mag maximaal 5 MB groot zijn.',
-            'file.mimes' => 'Alleen jpg, jpeg, png, pdf, txt, log, doc en docx zijn toegelaten.',
-        ];
-    }
-
     public function save(): void
     {
-        $validated = $this->validate();
+        $validated = $this->validate(
+            [
+                'file' => 'required|file|max:5120|mimes:jpg,jpeg,png,pdf,txt,log,doc,docx',
+            ],
+            [
+                'file.required' => 'Kies een bestand om te uploaden.',
+                'file.file' => 'De gekozen upload is ongeldig.',
+                'file.max' => 'Het bestand mag maximaal 5 MB groot zijn.',
+                'file.mimes' => 'Alleen jpg, jpeg, png, pdf, txt, log, doc en docx zijn toegelaten.',
+            ]
+        );
 
         $uploadedFile = $validated['file'];
         $path = $uploadedFile->store('ticket-attachments', 'public');
@@ -45,13 +37,15 @@ new class extends Component
             'file_size' => $uploadedFile->getSize(),
         ]);
 
+        $this->ticket->logActivity(
+            'attachment_created',
+            'Bestand geüpload',
+            "Het bestand '{$attachment->original_name}' werd toegevoegd aan dit ticket."
+        );
+
         $this->reset('file');
 
-        $this->dispatch(
-            'attachment-created',
-            attachmentId: $attachment->id,
-            ticketId: $this->ticket->id
-        );
+        $this->dispatch('attachment-created', attachmentId: $attachment->id, ticketId: $this->ticket->id);
 
         session()->flash('attachments_success', 'Het bestand werd succesvol geüpload.');
     }
@@ -64,29 +58,29 @@ new class extends Component
             return;
         }
 
-        $disk = Storage::disk('public');
+        $originalName = $attachment->original_name;
 
-        if ($disk->exists($attachment->file_path)) {
-            $disk->delete($attachment->file_path);
+        if (Storage::disk('public')->exists($attachment->file_path)) {
+            Storage::disk('public')->delete($attachment->file_path);
         }
 
         $attachment->delete();
 
-        $this->dispatch(
-            'attachment-deleted',
-            attachmentId: $attachmentId,
-            ticketId: $this->ticket->id
+        $this->ticket->logActivity(
+            'attachment_deleted',
+            'Bestand verwijderd',
+            "Het bestand '{$originalName}' werd verwijderd van dit ticket."
         );
+
+        $this->dispatch('attachment-deleted', attachmentId: $attachmentId, ticketId: $this->ticket->id);
 
         session()->flash('attachments_success', 'Het bestand werd succesvol verwijderd.');
     }
 
     #[Computed]
-    public function attachments(): Collection
+    public function attachments()
     {
-        return $this->ticket->attachments()
-            ->latest()
-            ->get();
+        return $this->ticket->attachments()->latest()->get();
     }
 };
 ?>
@@ -108,14 +102,12 @@ new class extends Component
                 <label for="file" class="mb-2 block text-sm font-medium text-gray-700">
                     Bestand kiezen
                 </label>
-
                 <input
                     id="file"
                     type="file"
-                    wire:model.live="file"
+                    wire:model="file"
                     class="block w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm shadow-sm file:mr-4 file:rounded-md file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
                 >
-
                 @error('file')
                 <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
                 @enderror
@@ -153,7 +145,6 @@ new class extends Component
             <h2 class="text-lg font-semibold text-gray-900">
                 Geüploade bestanden
             </h2>
-
             <span class="text-sm text-gray-500">
                 {{ $this->attachments->count() }} item(s)
             </span>
@@ -192,7 +183,6 @@ new class extends Component
                                 <a
                                     href="{{ $attachment->url() }}"
                                     target="_blank"
-                                    rel="noopener noreferrer"
                                     class="inline-flex items-center rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
                                 >
                                     Open bestand

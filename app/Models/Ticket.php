@@ -2,7 +2,12 @@
 
 namespace App\Models;
 
+use App\Actions\Tickets\LogTicketActivityAction;
+use App\TicketPriority;
+use App\TicketStatus;
+use App\TicketWorkflowStep;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Ticket extends Model
@@ -12,8 +17,19 @@ class Ticket extends Model
         'description',
         'status',
         'priority',
+        'assigned_user_id',
+        'workflow_step',
         'attachment_path',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'status' => TicketStatus::class,
+            'priority' => TicketPriority::class,
+            'workflow_step' => TicketWorkflowStep::class,
+        ];
+    }
 
     public function comments(): HasMany
     {
@@ -25,53 +41,82 @@ class Ticket extends Model
         return $this->hasMany(TicketAttachment::class);
     }
 
+    public function activities(): HasMany
+    {
+        return $this->hasMany(TicketActivity::class);
+    }
+
+    public function assignee(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_user_id');
+    }
+
     public function statusLabel(): string
     {
-        return match ($this->status) {
-            'open' => 'Open',
-            'in_progress' => 'In behandeling',
-            'closed' => 'Gesloten',
-            default => 'Onbekend',
-        };
+        return $this->status->label();
     }
 
     public function statusBadgeClasses(): string
     {
-        return match ($this->status) {
-            'open' => 'bg-blue-100 text-blue-700',
-            'in_progress' => 'bg-yellow-100 text-yellow-700',
-            'closed' => 'bg-green-100 text-green-700',
-            default => 'bg-gray-100 text-gray-700',
-        };
+        return $this->status->badgeClasses();
     }
 
     public function priorityLabel(): string
     {
-        return match ($this->priority) {
-            'low' => 'Laag',
-            'medium' => 'Normaal',
-            'high' => 'Hoog',
-            default => 'Onbekend',
-        };
+        return $this->priority->label();
     }
 
     public function priorityBadgeClasses(): string
     {
-        return match ($this->priority) {
-            'low' => 'bg-gray-100 text-gray-700',
-            'medium' => 'bg-orange-100 text-orange-700',
-            'high' => 'bg-red-100 text-red-700',
-            default => 'bg-gray-100 text-gray-700',
-        };
+        return $this->priority->badgeClasses();
+    }
+
+    public function workflowLabel(): string
+    {
+        return $this->workflow_step->label();
+    }
+
+    public function workflowBadgeClasses(): string
+    {
+        return $this->workflow_step->badgeClasses();
+    }
+
+    public function assigneeName(): string
+    {
+        return $this->assignee?->name ?? 'Niet toegewezen';
     }
 
     public function isOpen(): bool
     {
-        return $this->status === 'open';
+        return $this->status === TicketStatus::Open;
     }
 
     public function isClosed(): bool
     {
-        return $this->status === 'closed';
+        return $this->status === TicketStatus::Closed;
+    }
+
+    public function logActivity(
+        string $eventOrDescription,
+        ?string $label = null,
+        ?string $description = null,
+    ): void {
+        if ($label === null && $description === null) {
+            app(LogTicketActivityAction::class)->execute(
+                $this,
+                $eventOrDescription,
+                'ticket_event',
+                'Ticket activiteit',
+            );
+
+            return;
+        }
+
+        app(LogTicketActivityAction::class)->execute(
+            $this,
+            $description ?? '',
+            $eventOrDescription,
+            $label ?? 'Ticket activiteit',
+        );
     }
 }
